@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ecs-lab</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2228; --muted: #5b6470; --line: #e3e6ea;
+    --control: #7d8590; --accent: #1f6feb; --danger: #c62828; --warn-bg: #fff6e0; --warn-text: #7a5300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --card: #1a1f25; --text: #e6e9ed; --muted: #8b95a1; --line: #2a3139;
+      --control: #6b7480; --accent: #2f6bd8; --danger: #ef5350; --warn-bg: #3a2f12; --warn-text: #f3d48a;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  ::selection { background: var(--accent); color: #fff; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); accent-color: var(--accent); caret-color: var(--accent);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; display: grid; gap: 1rem; }
+  header { display: flex; align-items: baseline; gap: .6rem; }
+  h1 { font-size: 1.35rem; margin: 0; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 .75rem; }
+  .row h2 { margin: 0; }
+  .filters { margin-top: .9rem; }
+  .badge { font-size: .75rem; padding: .1rem .5rem; border-radius: 999px; background: var(--line); color: var(--text); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem 1rem; margin: 0; }
+  .grid dt { font-size: .75rem; color: var(--muted); }
+  .grid dd { margin: 0; font-family: ui-monospace, Consolas, monospace; font-size: .85rem; overflow-wrap: anywhere; }
+  .warn { background: var(--warn-bg); color: var(--warn-text); border-radius: 8px; padding: .6rem .8rem; font-size: .85rem; margin-top: .9rem; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  input[type=text], input[type=search] {
+    flex: 1; min-width: 10rem; min-height: 2.5rem; padding: .5rem .7rem; font: inherit; color: inherit;
+    background: var(--bg); border: 1px solid var(--control); border-radius: 6px;
+  }
+  input::placeholder { color: var(--muted); }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  button {
+    min-height: 2.5rem; padding: .5rem 1rem; font: inherit; border: 1px solid transparent; border-radius: 6px;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--text); border-color: var(--control); }
+  button.ghost[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:hover { filter: brightness(1.08); }
+  button.ghost:hover { background: var(--line); filter: none; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .counter { font-size: .75rem; color: var(--muted); min-width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
+  .strip { display: flex; flex-wrap: wrap; gap: 3px; margin: .8rem 0 .6rem; min-height: 1.4rem; }
+  .strip span { width: 1rem; height: 1.4rem; border-radius: 3px; }
+  .strip span.fail { background: transparent; border: 2px solid var(--danger); }
+  .legend { display: flex; flex-wrap: wrap; gap: .4rem 1rem; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chip { display: inline-flex; align-items: center; gap: .35rem; font-family: ui-monospace, Consolas, monospace; font-size: .78rem; color: var(--text); }
+  .dot { width: .6rem; height: .6rem; border-radius: 50%; display: inline-block; flex: none; }
+  .readout { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; font-size: .85rem; color: var(--muted); margin: .9rem 0 0; }
+  .readout:empty { display: none; }
+  .saved { font-size: .85rem; margin: .5rem 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
+  .saved.mismatch { background: var(--warn-bg); color: var(--warn-text); border-radius: 8px; padding: .5rem .7rem; }
+  .saved.mismatch .chip { color: inherit; }
+  .undo { display: flex; align-items: center; gap: .75rem; margin: .6rem 0 0; padding: .4rem .4rem .4rem .8rem;
+          background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font-size: .85rem; }
+  .undo span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .undo button { min-height: 2.25rem; padding: .3rem .9rem; }
+  ul { list-style: none; margin: .6rem 0 0; padding: 0; }
+  li { display: flex; gap: .75rem; align-items: flex-start; padding: .6rem 0; border-top: 1px solid var(--line); }
+  li .body { flex: 1; min-width: 0; padding-top: .15rem; }
+  li .text { overflow-wrap: anywhere; white-space: pre-wrap; }
+  li .meta { display: flex; flex-wrap: wrap; gap: .3rem .8rem; font-size: .78rem; color: var(--muted); margin-top: .2rem; }
+  li button.delete {
+    width: 2.75rem; height: 2.75rem; min-height: 0; padding: 0; flex: none; display: grid; place-items: center;
+    background: transparent; color: var(--muted); border-radius: 6px;
+  }
+  li button.delete:hover { color: var(--danger); background: var(--line); filter: none; }
+  li.empty { display: block; color: var(--muted); font-size: .9rem; padding: 1rem 0 .2rem; text-align: center; }
+  .error { color: var(--danger); font-size: .85rem; margin: .5rem 0 0; }
+  .error:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>ecs-lab</h1>
+    <span class="badge" id="version" title="Image version (APP_VERSION)">…</span>
+  </header>
+
+  <section class="card" aria-labelledby="h-served">
+    <h2 id="h-served">Served by</h2>
+    <dl class="grid">
+      <div><dt>Task</dt><dd id="i-task">…</dd></div>
+      <div><dt>Availability zone</dt><dd id="i-az">…</dd></div>
+      <div><dt>Launch type</dt><dd id="i-launch">…</dd></div>
+      <div><dt>Cluster</dt><dd id="i-cluster">…</dd></div>
+      <div><dt>Container host</dt><dd id="i-host">…</dd></div>
+      <div><dt>Uptime</dt><dd id="i-uptime">…</dd></div>
+      <div><dt>Notes store</dt><dd id="i-store">…</dd></div>
+    </dl>
+    <div class="warn" id="mem-warn" hidden>
+      Notes are kept in this task's memory. Each task has its own list, so with more than one task
+      behind the load balancer you'll see different notes on refresh, and everything is lost when
+      the task stops. Set <code>NOTES_BUCKET</code> to share notes through S3.
+    </div>
+    <p class="error" id="info-error" role="alert"></p>
+  </section>
+
+  <section class="card" aria-labelledby="h-lb">
+    <div class="row">
+      <h2 id="h-lb">Load balancing</h2>
+      <span class="spacer"></span>
+      <div class="row">
+        <button class="ghost" id="ping-once">Ping</button>
+        <button class="ghost" id="ping-auto" aria-pressed="false">Auto-ping</button>
+      </div>
+    </div>
+    <div class="strip" id="strip" aria-hidden="true"></div>
+    <div class="legend" id="legend"><span>Ping a few times to see which tasks answer.</span></div>
+  </section>
+
+  <section class="card" aria-labelledby="h-notes">
+    <h2 id="h-notes">Notes</h2>
+    <form class="row" id="form">
+      <label for="text" class="sr-only">New note</label>
+      <input type="text" id="text" maxlength="280" placeholder="Write a note…" autocomplete="off"
+             aria-describedby="counter" required>
+      <span class="counter" id="counter">0 / 280</span>
+      <button id="add">Add</button>
+    </form>
+    <div class="saved" id="saved" hidden></div>
+    <p class="error" id="notes-error" role="alert"></p>
+    <div class="undo" id="undo-bar" hidden>
+      <span id="undo-text"></span>
+      <button class="ghost" id="undo" type="button">Undo</button>
+    </div>
+    <div class="row filters">
+      <label for="search" class="sr-only">Filter notes</label>
+      <input type="search" id="search" placeholder="Filter notes">
+      <button class="ghost" id="refresh" type="button">Reload notes</button>
+    </div>
+    <div class="readout" id="list-from">Loading notes…</div>
+    <ul id="notes" aria-labelledby="h-notes"></ul>
+  </section>
+
+  <div class="sr-only" id="announce" role="status" aria-live="polite"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const MAX_PINGS = 30;
+const UNDO_MS = 5000;
+const X_ICON = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' +
+  '<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" fill="none"/></svg>';
+
+let info = null;        // last successful "/" answer
+let notes = [];
+let listTask = null;    // task that answered the last GET /notes
+let pings = [];
+let lastPingOk = true;
+let autoTimer = null;
+let pingInFlight = false;
+let pending = null;     // {note, timer}: delete waiting out its undo window
+
+// Hues skip the red band so a task never looks like a failure.
+function color(taskId) {
+  let h = 0;
+  for (const c of taskId) h = (h * 31 + c.charCodeAt(0)) % 260;
+  return `oklch(0.62 0.14 ${h + 60})`;
+}
+
+function short(taskId) { return taskId.length > 12 ? taskId.slice(0, 8) + "…" : taskId; }
+
+function chip(taskId) {
+  const span = document.createElement("span");
+  span.className = "chip";
+  span.title = taskId;
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  dot.style.background = color(taskId);
+  span.append(dot, short(taskId));
+  return span;
+}
+
+function say(text) {
+  // Re-set so repeated identical messages are still announced.
+  $("announce").textContent = "";
+  requestAnimationFrame(() => { $("announce").textContent = text; });
+}
+
+function duration(s) {
+  s = Math.max(0, Math.floor(s));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor(s % 86400 / 3600)}h`;
+}
+
+function ago(iso) {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  return s < 5 ? "just now" : duration(s) + " ago";
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {cache: "no-store", ...opts,
+    headers: {Accept: "application/json", ...(opts.headers || {})}});
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { detail = (await r.json()).detail || detail; } catch {}
+    const err = new Error(typeof detail === "string" ? detail : `HTTP ${r.status}`);
+    err.status = r.status;
+    throw err;
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// ---------- served by + load balancing ----------
+
+function showInfo(i) {
+  info = i;
+  $("version").textContent = i.version;
+  $("i-task").replaceChildren(chip(i.task_id));
+  $("i-az").textContent = i.availability_zone;
+  $("i-launch").textContent = i.launch_type;
+  $("i-cluster").textContent = i.cluster || "–";
+  $("i-host").textContent = i.hostname;
+  $("i-uptime").textContent = duration(i.uptime_s);
+  $("i-store").textContent = i.notes_backend;
+  $("mem-warn").hidden = i.notes_backend !== "memory";
+  const err = i.metadata_error ? "Task metadata unavailable: " + i.metadata_error : "";
+  if ($("info-error").textContent !== err) $("info-error").textContent = err;
+  document.title = `ecs-lab · ${short(i.task_id)}`;
+}
+
+async function ping() {
+  if (pingInFlight) return;  // don't stack requests on a slow load balancer
+  pingInFlight = true;
+  try {
+    const i = await api("/");
+    const isNew = !pings.includes(i.task_id);
+    showInfo(i);
+    pings.push(i.task_id);
+    const seen = new Set(pings.filter(Boolean)).size;
+    if (isNew && pings.length > 1) say(`New task answered: ${short(i.task_id)}. ${seen} tasks seen.`);
+    else if (!lastPingOk) say(`Pings answering again, from ${short(i.task_id)}.`);
+    lastPingOk = true;
+  } catch (e) {
+    pings.push(null);
+    if (lastPingOk) say("Ping failed.");
+    lastPingOk = false;
+  } finally {
+    if (pings.length > MAX_PINGS) pings.shift();
+    pingInFlight = false;
+    renderPings();
+  }
+}
+
+function renderPings() {
+  $("strip").replaceChildren(...pings.map(t => {
+    const s = document.createElement("span");
+    if (t) s.style.background = color(t);
+    else s.className = "fail";
+    return s;
+  }));
+  const counts = {};
+  for (const t of pings) counts[t || "failed"] = (counts[t || "failed"] || 0) + 1;
+  $("legend").replaceChildren(...Object.entries(counts).map(([t, n]) => {
+    const wrap = document.createElement("span");
+    if (t === "failed") wrap.textContent = `failed × ${n}`;
+    else wrap.append(chip(t), ` × ${n}`);
+    return wrap;
+  }));
+}
+
+function setAuto(on) {
+  clearInterval(autoTimer);
+  autoTimer = on ? setInterval(ping, 1000) : null;
+  $("ping-auto").setAttribute("aria-pressed", String(on));
+  if (on) ping();
+}
+
+// ---------- notes ----------
+
+function renderListFrom() {
+  if (!listTask) return;
+  const visible = notes.filter(n => !pending || n.id !== pending.note.id).length;
+  const where = info && info.notes_backend === "s3" ? "Shared S3 list, served by" : "List from";
+  $("list-from").replaceChildren(`${where} `, chip(listTask),
+    ` · ${visible} note${visible === 1 ? "" : "s"}`);
+}
+
+function renderNotes() {
+  const q = $("search").value.trim().toLowerCase();
+  const live = notes.filter(n => !pending || n.id !== pending.note.id);
+  const shown = live.slice().reverse().filter(n => !q || n.text.toLowerCase().includes(q));
+  renderListFrom();
+  if (!shown.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = live.length ? "No notes match the filter." : "No notes yet. Add one above.";
+    $("notes").replaceChildren(li);
+    return;
+  }
+  $("notes").replaceChildren(...shown.map(n => {
+    const li = document.createElement("li");
+    const body = document.createElement("div");
+    body.className = "body";
+    const text = document.createElement("div");
+    text.className = "text";
+    text.textContent = n.text;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const when = document.createElement("span");
+    when.textContent = ago(n.created_at);
+    when.title = new Date(n.created_at).toLocaleString();
+    const by = document.createElement("span");
+    by.append("written by ", chip(n.task_id));
+    meta.append(when, by);
+    if (n.source !== "api") {
+      const src = document.createElement("span");
+      src.textContent = `via ${n.source}`;
+      meta.append(src);
+    }
+    body.append(text, meta);
+    const del = document.createElement("button");
+    del.className = "delete";
+    del.type = "button";
+    del.dataset.id = n.id;
+    del.innerHTML = X_ICON;
+    del.title = "Delete note";
+    del.setAttribute("aria-label", `Delete note: ${n.text.slice(0, 40)}${n.text.length > 40 ? "…" : ""}`);
+    del.onclick = () => removeNote(n);
+    li.append(body, del);
+    return li;
+  }));
+}
+
+async function loadNotes() {
+  try {
+    const data = await api("/notes");
+    notes = data.notes;
+    listTask = data.task_id;
+    $("notes-error").textContent = "";
+    renderNotes();
+  } catch (e) {
+    $("list-from").textContent = "";
+    $("notes-error").textContent = "Could not load notes: " + e.message;
+  }
+}
+
+function showSaved(savedOn) {
+  const box = $("saved");
+  const mismatch = info && info.notes_backend === "memory" && listTask && listTask !== savedOn;
+  box.className = mismatch ? "saved mismatch" : "saved";
+  if (mismatch) {
+    box.replaceChildren("Saved on ", chip(savedOn), ". This list came from ", chip(listTask),
+      ", and each task keeps its own notes in memory, so yours isn't shown here.");
+    say(`Saved on task ${short(savedOn)}. The list came from a different task, ${short(listTask)}, so your note isn't shown.`);
+  } else {
+    box.replaceChildren("Saved on ", chip(savedOn), ".");
+    say(`Note saved on task ${short(savedOn)}.`);
+  }
+  box.hidden = false;
+}
+
+// Delete waits out an undo window first; only then is the request sent.
+function removeNote(note) {
+  if (pending) commitDelete();
+  pending = {note, timer: setTimeout(commitDelete, UNDO_MS)};
+  $("undo-text").textContent = `Deleted “${note.text}”`;
+  $("undo-bar").hidden = false;
+  $("saved").hidden = true;
+  renderNotes();
+  say("Note deleted. Undo is available for 5 seconds.");
+  $("undo").focus();
+}
+
+function undoDelete() {
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  const id = pending.note.id;
+  pending = null;
+  $("undo-bar").hidden = true;
+  renderNotes();
+  say("Delete undone.");
+  ($("notes").querySelector(`button[data-id="${id}"]`) || $("text")).focus();
+}
+
+async function commitDelete() {
+  if (!pending) return;
+  const {note, timer} = pending;
+  clearTimeout(timer);
+  pending = null;
+  $("undo-bar").hidden = true;
+  if (document.activeElement === $("undo")) $("text").focus();
+  try {
+    await api(`/notes/${note.id}`, {method: "DELETE"});
+  } catch (e) {
+    const elsewhere = e.status === 404 && info && info.notes_backend === "memory";
+    $("notes-error").textContent = elsewhere
+      ? "Not deleted: this request reached a task that doesn't hold the note. Try again; the load balancer may route you to the right one."
+      : "Could not delete: " + e.message;
+  }
+  loadNotes();
+}
+
+// If the tab closes mid-undo-window, still send the delete.
+window.addEventListener("pagehide", () => {
+  if (pending) fetch(`/notes/${pending.note.id}`, {method: "DELETE", keepalive: true});
+});
+
+$("text").addEventListener("input", () => {
+  $("counter").textContent = `${$("text").value.length} / 280`;
+});
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  $("notes-error").textContent = "";
+  $("add").disabled = true;
+  try {
+    const note = await api("/notes", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text})});
+    $("text").value = "";
+    $("counter").textContent = "0 / 280";
+    await loadNotes();
+    showSaved(note.task_id);
+  } catch (e) {
+    $("notes-error").textContent = "Could not save: " + e.message + ". Your text is still in the box.";
+  } finally {
+    $("add").disabled = false;
+    $("text").focus();
+  }
+});
+
+$("undo").addEventListener("click", undoDelete);
+$("search").addEventListener("input", renderNotes);
+$("refresh").addEventListener("click", loadNotes);
+$("ping-once").addEventListener("click", ping);
+$("ping-auto").addEventListener("click", () => setAuto(!autoTimer));
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && autoTimer) setAuto(false);
+});
+
+ping().then(loadNotes);
+setInterval(renderNotes, 30000);  // keep "x ago" fresh
+</script>
+</body>
+</html>

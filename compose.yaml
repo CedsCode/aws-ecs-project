@@ -1,0 +1,64 @@
+# Local runs only. On ECS the task definition plays this file's role.
+#   docker compose up --build                     app on :8000, notes in memory
+#   docker compose run --rm seed                  one-off seed (like the ECS one-off task)
+#   docker compose run --rm crash                 CRASH_ON_START: exits non-zero
+#   docker compose --profile s3 up --build        + S3Mock, app-s3 on :8001 with notes in "S3"
+#   docker compose --profile s3 run --rm seed-s3  seed into S3Mock
+
+x-app: &app
+  build:
+    context: .
+    args:
+      APP_VERSION: ${APP_VERSION:-local}
+  image: ecs-lab:local
+  stop_grace_period: 30s   # ECS default stopTimeout is 30s too
+
+x-s3-env: &s3-env
+  NOTES_BUCKET: notes
+  AWS_ENDPOINT_URL_S3: http://s3:9090
+  AWS_ACCESS_KEY_ID: local     # S3Mock ignores credentials, but boto3 needs some
+  AWS_SECRET_ACCESS_KEY: local
+  AWS_REGION: ap-southeast-1
+
+services:
+  app:
+    <<: *app
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  seed:
+    <<: *app
+    profiles: [seed]
+    command: ["python", "-m", "app.seed"]
+
+  crash:
+    <<: *app
+    profiles: [crash]
+    environment:
+      CRASH_ON_START: "true"
+
+  # Local S3 stand-in (MinIO no longer publishes free images). Data is lost on `down`.
+  s3:
+    image: adobe/s3mock
+    profiles: [s3]
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: notes
+    ports: ["9090:9090"]
+
+  app-s3:
+    <<: *app
+    profiles: [s3]
+    ports: ["8001:8000"]
+    environment: *s3-env
+    depends_on: [s3]
+
+  seed-s3:
+    <<: *app
+    profiles: [s3]
+    command: ["python", "-m", "app.seed"]
+    environment: *s3-env
+    depends_on: [s3]
