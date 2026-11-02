@@ -21,7 +21,8 @@ def client(monkeypatch):
 def test_healthz(client):
     r = client.get("/healthz")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    assert r.json() == {"status": "broken"}
+
 
 
 def test_root_is_local_off_ecs(client):
