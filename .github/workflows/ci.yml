@@ -1,0 +1,72 @@
+# Builds, tests and pushes the app image. Never creates or changes infrastructure.
+#   test: every PR and push to main. No AWS access.
+#   push: push to main (or a manual run) after test passes. OIDC role -> ECR, tagged with the full commit SHA.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Manual runs from any branch. On anything but main, AWS should refuse the role.
+  workflow_dispatch:
+
+# Nothing by default; each job grants only what it needs.
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13" # matches the Dockerfile base image
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      - name: Test
+        run: python -m pytest
+
+      - name: Docker build (linux/amd64)
+        run: docker build --platform linux/amd64 .
+
+  push:
+    needs: test
+    # Not on PRs. Skipped until the IAM side exists (AWS_ROLE_ARN set).
+    if: github.event_name != 'pull_request' && vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets the job request the OIDC token AWS checks
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assume AWS role (OIDC, no access keys)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg APP_VERSION="${GITHUB_SHA::7}" \
+            -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "Pushed $IMAGE" >> "$GITHUB_STEP_SUMMARY"
