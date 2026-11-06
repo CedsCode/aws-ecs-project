@@ -1,9 +1,9 @@
 # Deploys an image that CI already pushed to an existing ECS service.
 # Only changes the app version (the image tag). Never creates or changes infrastructure.
 # Reads the service's current task definition, swaps the image of container "app",
-# registers a new revision, updates the service, waits, then fails unless the service
-# actually ended up on the new revision (after a circuit-breaker rollback, the service
-# is stable again, but on the OLD revision).
+# registers a new revision, updates the service, then polls until the rollout is COMPLETED
+# on the new revision. Fails if the service ends up anywhere else: after a circuit-breaker
+# rollback the service is stable again, but on the OLD revision.
 name: Deploy
 
 on:
@@ -106,24 +106,27 @@ jobs:
             --task-definition "$NEW" > /dev/null
           echo "Service $SERVICE updated to $NEW"
 
-      - name: Wait for the service to be stable
-        # Polls every 15 s, up to 10 minutes. "Stable" is also true after a rollback,
-        # so the next step decides success.
-        run: aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
-
-      - name: Check the service ended up on the new revision
+      - name: Wait until the new revision is COMPLETED (fail on rollback)
+        # Polls every 15 s, up to 15 minutes. Not "services-stable": that passes about
+        # 3 minutes before ECS marks the rollout COMPLETED, and also passes after a rollback.
         run: |
-          read -r FINAL STATE < <(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
-            --query 'services[0].[taskDefinition, deployments[?status==`PRIMARY`] | [0].rolloutState]' \
-            --output text)
+          for i in $(seq 1 60); do
+            read -r FINAL STATE < <(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+              --query 'services[0].[taskDefinition, deployments[?status==`PRIMARY`] | [0].rolloutState]' \
+              --output text)
+            echo "[$i] service on $FINAL, rollout $STATE"
+            if [ "$FINAL" != "$NEW" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "COMPLETED" ]; then break; fi
+            sleep 15
+          done
           {
             echo "### Deploy result"
             echo "- Before: \`$CURRENT\`"
             echo "- Registered: \`$NEW\`"
             echo "- Final: \`$FINAL\` (rollout $STATE)"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$FINAL" != "$NEW" ] || [ "$STATE" != "COMPLETED" ]; then
-            echo "::error::Service is on $FINAL (rollout $STATE), not $NEW. The deployment failed or was rolled back."
-            exit 1
+          if [ "$FINAL" != "$NEW" ]; then
+            echo "::error::Rolled back: service is on $FINAL, not $NEW."; exit 1
+          elif [ "$STATE" != "COMPLETED" ]; then
+            echo "::error::Rollout of $NEW ended as $STATE (not COMPLETED)."; exit 1
           fi
           echo "Deployed $NEW"
