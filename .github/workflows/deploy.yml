@@ -1,0 +1,129 @@
+# Deploys an image that CI already pushed to an existing ECS service.
+# Only changes the app version (the image tag). Never creates or changes infrastructure.
+# Reads the service's current task definition, swaps the image of container "app",
+# registers a new revision, updates the service, waits, then fails unless the service
+# actually ended up on the new revision (after a circuit-breaker rollback, the service
+# is stable again, but on the OLD revision).
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster:
+        description: ECS cluster name
+        required: true
+        default: ecs-lab
+      service:
+        description: ECS service name
+        required: true
+        default: ecs-lab-svc
+      image_tag:
+        description: Full 40-character commit SHA of an image CI pushed to ECR
+        required: true
+
+# Nothing by default; the job grants only what it needs.
+permissions: {}
+
+# One deploy per service at a time; a second run waits instead of racing the first.
+concurrency:
+  group: deploy-${{ inputs.cluster }}-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      id-token: write # lets the job request the OIDC token AWS checks
+    # Inputs reach the shell only through env, never inline ${{ }}, so they can't inject commands.
+    env:
+      CLUSTER: ${{ inputs.cluster }}
+      SERVICE: ${{ inputs.service }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      CONTAINER: app
+    steps:
+      - name: Check inputs and branch
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Deploys run from main only (got $GITHUB_REF)."; exit 1
+          fi
+          if ! [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::image_tag must be the full 40-character lowercase commit SHA."; exit 1
+          fi
+          for name in "$CLUSTER" "$SERVICE"; do
+            if ! [[ "$name" =~ ^[A-Za-z0-9_-]{1,255}$ ]]; then
+              echo "::error::Invalid cluster or service name: $name"; exit 1
+            fi
+          done
+
+      - name: Assume deploy role (OIDC, no access keys)
+        id: aws
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Read current task definition
+        env:
+          ACCOUNT_ID: ${{ steps.aws.outputs.aws-account-id }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          CURRENT=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          if [ -z "$CURRENT" ] || [ "$CURRENT" = "None" ]; then
+            echo "::error::Service $SERVICE not found in cluster $CLUSTER."; exit 1
+          fi
+          echo "CURRENT=$CURRENT" >> "$GITHUB_ENV"
+          echo "IMAGE=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_ENV"
+          aws ecs describe-task-definition --task-definition "$CURRENT" --include TAGS > current.json
+          echo "Current: $CURRENT"
+
+      - name: Swap the image only
+        run: |
+          jq -e --arg c "$CONTAINER" '.taskDefinition.containerDefinitions | any(.name == $c)' current.json > /dev/null \
+            || { echo "::error::No container named $CONTAINER in $CURRENT."; exit 1; }
+          # Keep everything else as it is; drop the read-only fields register-task-definition rejects.
+          jq --arg c "$CONTAINER" --arg img "$IMAGE" '
+            (.tags // []) as $tags
+            | .taskDefinition
+            | .containerDefinitions |= map(if .name == $c then .image = $img else . end)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+            | if ($tags | length) > 0 then . + {tags: $tags} else . end
+          ' current.json > new.json
+          echo "New image: $IMAGE"
+
+      - name: Register new revision
+        run: |
+          NEW=$(aws ecs register-task-definition --cli-input-json file://new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "NEW=$NEW" >> "$GITHUB_ENV"
+          echo "Registered: $NEW"
+
+      - name: Update service
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "$NEW" > /dev/null
+          echo "Service $SERVICE updated to $NEW"
+
+      - name: Wait for the service to be stable
+        # Polls every 15 s, up to 10 minutes. "Stable" is also true after a rollback,
+        # so the next step decides success.
+        run: aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+
+      - name: Check the service ended up on the new revision
+        run: |
+          read -r FINAL STATE < <(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].[taskDefinition, deployments[?status==`PRIMARY`] | [0].rolloutState]' \
+            --output text)
+          {
+            echo "### Deploy result"
+            echo "- Before: \`$CURRENT\`"
+            echo "- Registered: \`$NEW\`"
+            echo "- Final: \`$FINAL\` (rollout $STATE)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$FINAL" != "$NEW" ] || [ "$STATE" != "COMPLETED" ]; then
+            echo "::error::Service is on $FINAL (rollout $STATE), not $NEW. The deployment failed or was rolled back."
+            exit 1
+          fi
+          echo "Deployed $NEW"
