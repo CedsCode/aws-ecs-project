@@ -1,0 +1,3 @@
+# Exclude the single HTML template from GitHub's language stats
+# so the repo is reported as Python.
+*.html linguist-detectable=false
